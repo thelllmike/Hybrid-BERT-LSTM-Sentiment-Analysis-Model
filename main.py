@@ -3,15 +3,15 @@ from pydantic import BaseModel
 import torch
 import pandas as pd
 import os
+import re
 from transformers import BertModel
 
 # Define the FastAPI app
 app = FastAPI()
 
-# Define input schema for the API
+# Define input schema for the API (single review string with emoji)
 class ReviewInput(BaseModel):
     review: str
-    emoji: str
 
 # Load the negative words and negative emojis from the PKL files
 negative_words_df = pd.read_pickle('extended_negative_words.pkl')
@@ -22,7 +22,7 @@ negative_words = negative_words_df['Negative Words'].tolist()
 negative_emojis = negative_emojis_df['Negative Emojis'].tolist()
 
 # Dummy emoji data (replace with actual emoji data mapping)
-emoji_data = {'❤️': 0, '😡': 1}
+emoji_data = {'❤️': 0, '😡': 1, '😍': 2, '😊': 3}  # Ensure emoji "😊" is included
 
 # Define the BERT-LSTM model architecture
 class BERTLSTMModel(torch.nn.Module):
@@ -96,6 +96,21 @@ else:
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)  # Move model to the device
 
+# Function to extract review and emoji from the input string
+def extract_review_and_emoji(input_text):
+    # Regex pattern to find emojis
+    emoji_pattern = re.compile("["u"\U0001F600-\U0001F64F"  # emoticons
+                               u"\U0001F300-\U0001F5FF"  # symbols & pictographs
+                               u"\U0001F680-\U0001F6FF"  # transport & map symbols
+                               u"\U0001F1E0-\U0001F1FF"  # flags (iOS)
+                               "]+", flags=re.UNICODE)
+    match = emoji_pattern.search(input_text)
+    if match:
+        emoji = match.group(0)
+        review = input_text.replace(emoji, '').strip()  # Remove the emoji from the text
+        return review, emoji
+    return input_text, ''  # No emoji found
+
 # Example preprocess function (replace with your actual tokenization process)
 def preprocess_single_review(review, emoji, emoji_data):
     # Example token IDs (replace with your actual tokenization process)
@@ -114,8 +129,13 @@ def preprocess_single_review(review, emoji, emoji_data):
 # Define the prediction endpoint
 @app.post("/predict")
 async def predict_sentiment(data: ReviewInput):
-    review = data.review
-    emoji = data.emoji
+    review_with_emoji = data.review
+
+    # Extract review text and emoji
+    review, emoji = extract_review_and_emoji(review_with_emoji)
+
+    if not emoji:
+        raise HTTPException(status_code=400, detail="No emoji found in the input review")
 
     try:
         # Preprocess the review and emoji
@@ -128,16 +148,20 @@ async def predict_sentiment(data: ReviewInput):
 
         # Forward pass through the model
         with torch.no_grad():
-            predicted_score = model(input_ids, attention_mask=attention_mask, emoji_indices=emoji_index)
-        predicted_score = predicted_score.squeeze().item()
+            predicted_score_raw = model(input_ids, attention_mask=attention_mask, emoji_indices=emoji_index)
+            print(f"Raw predicted score before sigmoid: {predicted_score_raw.item()}")  # Debugging raw output
+        
+        predicted_score = predicted_score_raw.squeeze().item()
 
         # Apply penalty for negative words in the review
         for word in negative_words:
             if word in review.lower():
+                print(f"Applying penalty for negative word: {word}")  # Debug print
                 predicted_score -= 0.5  # Deduct a fixed amount for negative words
 
         # Apply penalty for negative emojis
         if emoji in negative_emojis:
+            print(f"Applying penalty for negative emoji: {emoji}")  # Debug print
             predicted_score -= 0.5  # Deduct for negative emoji
 
         # Ensure the score stays between 0 and 5
