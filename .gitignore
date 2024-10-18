@@ -1,0 +1,25 @@
+# Ignore Python bytecode
+__pycache__/
+*.py[cod]
+
+# Ignore virtual environments
+myenv/
+.venv/
+
+# Ignore Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# Ignore model files and large datasets
+*.pth
+*.h5
+*.npy
+*.pkl
+# *.csv
+# *.xlsx
+
+# Ignore docs and PDFs
+*.pdf
+
+# Ignore the compiled files from Python and other cache files
+*.log
+*.cache
